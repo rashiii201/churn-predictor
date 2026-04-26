@@ -1,0 +1,108 @@
+# train_model.py
+# This script trains the model and saves it as a file.
+# You only run this ONCE. After this, app.py loads the saved model.
+
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import accuracy_score, classification_report
+import pickle
+import os
+
+# ── 1. CREATE DATASET ─────────────────────────────────────────────────────────
+# We use a realistic synthetic dataset since we don't have the original.
+# If you have your own CSV, replace this section with: df = pd.read_csv("your_file.csv")
+
+np.random.seed(42)
+n = 1000
+
+df = pd.DataFrame({
+    "tenure":           np.random.randint(1, 72, n),          # months with company
+    "monthly_charges":  np.random.uniform(20, 120, n),        # monthly bill
+    "total_charges":    np.random.uniform(100, 8000, n),      # total billed
+    "num_products":     np.random.randint(1, 5, n),           # products subscribed
+    "has_internet":     np.random.choice([0, 1], n),          # internet service
+    "has_phone":        np.random.choice([0, 1], n),          # phone service
+    "is_senior":        np.random.choice([0, 1], n, p=[0.8, 0.2]),
+    "contract_type":    np.random.choice(
+                            ["Month-to-month", "One year", "Two year"], n,
+                            p=[0.55, 0.25, 0.20]
+                        ),
+    "payment_method":   np.random.choice(
+                            ["Electronic check", "Mailed check", "Bank transfer", "Credit card"], n
+                        ),
+})
+
+# Create realistic churn logic
+# Higher churn if: month-to-month contract, high charges, low tenure
+churn_prob = (
+    0.4 * (df["contract_type"] == "Month-to-month").astype(int) +
+    0.2 * (df["monthly_charges"] > 80).astype(int) +
+    0.2 * (df["tenure"] < 12).astype(int) +
+    0.1 * df["is_senior"] +
+    0.1 * np.random.random(n)
+)
+df["churn"] = (churn_prob > 0.5).astype(int)
+
+print(f"Dataset shape: {df.shape}")
+print(f"Churn rate: {df['churn'].mean():.1%}")
+
+# ── 2. ENCODE CATEGORICAL COLUMNS ────────────────────────────────────────────
+# ML models need numbers, not text. LabelEncoder converts text → numbers.
+
+le_contract = LabelEncoder()
+le_payment  = LabelEncoder()
+
+df["contract_encoded"] = le_contract.fit_transform(df["contract_type"])
+df["payment_encoded"]  = le_payment.fit_transform(df["payment_method"])
+
+# ── 3. SELECT FEATURES ───────────────────────────────────────────────────────
+features = [
+    "tenure", "monthly_charges", "total_charges", "num_products",
+    "has_internet", "has_phone", "is_senior",
+    "contract_encoded", "payment_encoded"
+]
+
+X = df[features]
+y = df["churn"]
+
+# ── 4. SPLIT & TRAIN ─────────────────────────────────────────────────────────
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
+
+model = RandomForestClassifier(
+    n_estimators=100,   # 100 decision trees in the forest
+    max_depth=8,        # each tree can be at most 8 levels deep
+    random_state=42
+)
+model.fit(X_train, y_train)
+
+# ── 5. EVALUATE ──────────────────────────────────────────────────────────────
+y_pred = model.predict(X_test)
+acc = accuracy_score(y_test, y_pred)
+print(f"\nModel Accuracy: {acc:.1%}")
+print("\nClassification Report:")
+print(classification_report(y_test, y_pred, target_names=["No Churn", "Churn"]))
+
+# ── 6. SAVE MODEL & ENCODERS ─────────────────────────────────────────────────
+# pickle saves Python objects as files so we can load them later in the app.
+os.makedirs("model", exist_ok=True)
+
+with open("model/churn_model.pkl", "wb") as f:
+    pickle.dump(model, f)
+
+with open("model/le_contract.pkl", "wb") as f:
+    pickle.dump(le_contract, f)
+
+with open("model/le_payment.pkl", "wb") as f:
+    pickle.dump(le_payment, f)
+
+# Save feature names so app knows the correct column order
+with open("model/features.pkl", "wb") as f:
+    pickle.dump(features, f)
+
+print("\nModel saved successfully to model/ folder!")
+print("Now run: streamlit run app.py")
